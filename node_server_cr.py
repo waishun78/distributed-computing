@@ -179,10 +179,33 @@ def handle_send_chat_msg(params, from_):
                 }
             })
         except requests.ConnectionError:
+            # If cannot connect to the leader than start leader election
             print("Starting a new election")
-            handle_election({"node_ids": [],
-                             "msg_to_retry": params["chat_msg"],
-                             "sender": sender}, None)
+            try:
+                requests.post(f"http://0.0.0.0:{N}", json={
+                    "msg_type": "election",
+                    "from": node_id,
+                    "params": {
+                        "max_id": node_id,
+                        "msg_to_retry": params["chat_msg"],
+                        "sender": sender,
+                    }
+                })
+            except requests.ConnectionError:
+                print("Start Repairing")
+                remove_n_and_repair_topology(params, from_)
+                requests.post(f"http://0.0.0.0:{N}", json={
+                    "msg_type": "election",
+                    "from": node_id,
+                    "params": {
+                        "max_id": node_id,
+                        "msg_to_retry": params["chat_msg"],
+                        "sender": sender,
+                    }
+                })
+            # handle_election({"max_id": node_id,
+            #                  "msg_to_retry": params["chat_msg"],
+            #                  "sender": sender}, None)
 
 
 def handle_dead_node_detected(params, from_):
@@ -242,58 +265,62 @@ def remove_n_and_repair_topology(params, from_):
             "NN": N
         }
     })
+    print(f"Fixed N:{N} NN:{NN} L:{L} P:{P}")
 
 
 def handle_election(params, from_):
     global L
 
-    if node_id in params["node_ids"]:
-        # This happens only when 'ELECTION' messages had passed through
-        # the ring, meaning we can elect a new leader and send 'ELECTED'.
-
-        # Select the leader to be the node with max node_id.
-        new_leader = max(params["node_ids"])
-        handle_elected({"L": new_leader,
-                        "msg_to_retry": params["msg_to_retry"],
-                        "sender": params["sender"]}, None)
-    else:
-        # print("Passing election to next")
-        # print("curr ids", params["node_ids"])
-        params["node_ids"].append(node_id)
+    def send_handle_elected(node_):
         try:
             requests.post(f"http://0.0.0.0:{N}", json={
                 "msg_type": "election",
                 "from": node_id,
                 "params": {
-                    "node_ids": params["node_ids"],
+                    "max_id": node_,
                     "msg_to_retry": params["msg_to_retry"],
                     "sender": params["sender"],
                 }
             })
         except requests.ConnectionError:
-            # If we can't pass the message to our N, it means it's likely down, and
-            # we need to repair the topology.
+            print("Start Repairing")
             remove_n_and_repair_topology(params, from_)
             requests.post(f"http://0.0.0.0:{N}", json={
                 "msg_type": "election",
                 "from": node_id,
                 "params": {
-                    "node_ids": params["node_ids"],
+                    "max_id": node_,
                     "msg_to_retry": params["msg_to_retry"],
                     "sender": params["sender"],
                 }
             })
 
+    if node_id > params["max_id"]:
+        # This happens when the max_id is smaller than node_id, update new leader with this larger node_id
+        print("I am larger")
+        send_handle_elected(node_id)
+    elif node_id < params["max_id"]:
+        # If node_id of current node is smaller than the max_id in message
+        print("I am smaller")
+        send_handle_elected(params["max_id"])
+    
+    else:
+        # if election message has gone one round and back to leader
+        print(f"Elected is {node_id}")
+        handle_elected({"L": node_id,
+                        "msg_to_retry": params["msg_to_retry"],
+                        "sender": params["sender"]}, None)
+
 
 def handle_elected(params, from_):
-    # print("starting elected with ", params["L"])
+    print("starting elected with ", params["L"])
     global L
     log_message(params['msg_to_retry'], params['sender'])
     if L != params["L"]:
         # If L hasn't already been updated – update it.
         L = params["L"]
         if node_id != L:
-            # print(f"{node_id} sent register to {L}")
+            print(f"{node_id} sent register to {L}")
             # If this node is not a leader, register yourself to a new leader.
             requests.post(f"http://0.0.0.0:{L}", json={
                 "msg_type": "register_node",
@@ -302,6 +329,7 @@ def handle_elected(params, from_):
                     "new_node": node_id
                 }
             })
+        print(f"{node_id} sending elected message to {N}")
         requests.post(f"http://0.0.0.0:{N}", json={
             "msg_type": "elected",
             "from": node_id,
@@ -312,7 +340,7 @@ def handle_elected(params, from_):
             }
         })
     else:
-        print(f'All nodes have updated their leader with {L}')
+        print(f'All nodes have updated their leader with {L} using Chang Roberts')
 
 
 class NodeRequestHandler(BaseHTTPRequestHandler):
