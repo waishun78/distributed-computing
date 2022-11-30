@@ -10,7 +10,7 @@ import json
 import threading
 import requests
 import argparse
-
+import time
 
 logging.basicConfig(level=logging.INFO)
 
@@ -18,6 +18,7 @@ node_id = ""
 N = NN = P = L = ""
 cluster_nodes = []
 nick = ""
+voting = False
 
 
 def log_message(msg, sender, color=""):
@@ -138,6 +139,7 @@ def handle_log_chat_msg(params, from_):
 
 
 def handle_send_chat_msg(params, from_):
+    global voting
     sender = params.get("sender", f"{node_id}, {nick}")
 
     if node_id == L:
@@ -181,6 +183,7 @@ def handle_send_chat_msg(params, from_):
         except requests.ConnectionError:
             # If cannot connect to the leader than start leader election
             print("Starting a new election")
+            voting = True
             try:
                 requests.post(f"http://0.0.0.0:{N}", json={
                     "msg_type": "election",
@@ -269,7 +272,7 @@ def remove_n_and_repair_topology(params, from_):
 
 
 def handle_election(params, from_):
-    global L
+    global L, voting
 
     def send_handle_elected(node_):
         try:
@@ -295,7 +298,7 @@ def handle_election(params, from_):
                 }
             })
 
-    if node_id > params["max_id"]:
+    if node_id > params["max_id"] and voting != True:
         # This happens when the max_id is smaller than node_id, update new leader with this larger node_id
         print("I am larger")
         send_handle_elected(node_id)
@@ -314,7 +317,9 @@ def handle_election(params, from_):
 
 def handle_elected(params, from_):
     print("starting elected with ", params["L"])
-    global L
+    global L, voting
+    voting = False
+    time.sleep(4)
     log_message(params['msg_to_retry'], params['sender'])
     if L != params["L"]:
         # If L hasn't already been updated – update it.
