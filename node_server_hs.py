@@ -38,7 +38,10 @@ def get_current_state():
         "NN": NN,
         "P": P,
         "L": L,
-        "cluster_nodes": cluster_nodes
+        "cluster_nodes": cluster_nodes,
+        "state": state,
+        "no_responses": no_responses,
+        "respOK": respOK
     }
 # class ClusterNode:
 #
@@ -198,7 +201,8 @@ def initiate_election():
                             "max_depth": max_depth
                         }
                     })
-        # Acquire lock to check no_responses, if not correct, release lock and allow someone else to get lock and then edit value
+        # Acquire lock to check no_responses, if not 2 yet, release lock and allow handle_candidature_response 
+        # process to update no_responses and respOK var
         print("trying to check for responses after acquiring lock for first time")
         cond.acquire()
         print(f"no_responses {no_responses}")
@@ -216,75 +220,9 @@ def initiate_election():
         if respOK == False:
             state = "LOST"
             print("I give up my candidacy")
-            # If respOK is true, then expand reach
+        # Increase max_depth by two, if node is still a candidate, it will send next wave of candidature messages
         print("increase depth")
         max_depth = max_depth*2
-
-        
-
-
-# def handle_no_responses(params, from_):
-#     global no_responses, respOK, state
-#     print("Restart trying")
-#     while state == "CANDIDATE":
-#         if no_responses < 2:
-#             time.sleep(5)
-#             # Send itself to check again
-#             print(f"Waiting for responses, have:{no_responses}")
-#         else:
-#             # Receive both responses back, restart response count
-#             no_responses = 0
-#             # If respOK is False, it is not leader
-#             if respOK == False:
-#                 state = "LOST"
-#             # If respOK is true, then expand reach
-#             else:
-#                 try:
-#                     requests.post(f"http://0.0.0.0:{N}", json={
-#                         "msg_type": "candidature",
-#                         "from": node_id,
-#                         "params": {
-#                             "current_node": node_id,
-#                             "current_depth": 0,
-#                             "max_depth": params["max_depth"]*2,
-#                         }
-#                     })
-#                 except requests.ConnectionError:
-#                     print("Start Repairing")
-#                     handle_dead_node_detected({"dead_node": N}, None)
-#                     requests.post(f"http://0.0.0.0:{N}", json={
-#                             "msg_type": "candidature",
-#                             "from": node_id,
-#                             "params": {
-#                                 "current_node": node_id,
-#                                 "current_depth": 0,
-#                                 "max_depth": params["max_depth"]*2,
-#                             }
-#                         })
-#                 try:
-#                     requests.post(f"http://0.0.0.0:{P}", json={
-#                             "msg_type": "candidature",
-#                             "from": node_id,
-#                             "params": {
-#                                 "current_node": node_id,
-#                                 "current_depth": 0,
-#                                 "max_depth": params["max_depth"]*2,
-#                             }
-#                         })
-#                 except requests.ConnectionError:
-#                     print("Start Repairing")
-#                     handle_dead_node_detected({"dead_node": P}, None)
-#                     remove_n_and_repair_topology()
-#                     requests.post(f"http://0.0.0.0:{P}", json={
-#                             "msg_type": "candidature",
-#                             "from": node_id,
-#                             "params": {
-#                                 "current_node": node_id,
-#                                 "current_depth": 0,
-#                                 "max_depth": params["max_depth"]*2,
-#                             }
-#                         })
-
         
 def handle_send_chat_msg(params, from_):
     sender = params.get("sender", f"{node_id}, {nick}")
@@ -329,6 +267,8 @@ def handle_send_chat_msg(params, from_):
             })
         except requests.ConnectionError:
             print("Starting a new election")
+            # Since the leader is the node that has failed
+            handle_dead_node_detected({"dead_node": L}, None)
             initiate_election()
 
 
@@ -416,8 +356,9 @@ def handle_candidature(params, from_):
         if state == "NOT_INVOLVED":
             initiate_election()
     elif params["current_node"] > node_id:
-        state = "LOST"
-        print("Lost")
+        if state != "NOT_INVOLVED":
+            state = "LOST"
+            print("Lost")
         depth = params["current_depth"] + 1
         if depth < params["max_depth"]:
             # Did not meet max depth
@@ -556,6 +497,7 @@ def handle_elected(params, from_):
     if L != params["L"]:
         # If L hasn't already been updated – update it.
         L = params["L"]
+        print(f"Updating elected to {L}")
         # Resetting states
         state = "NOT_INVOLVED"
         no_responses = 0
