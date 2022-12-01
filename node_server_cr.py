@@ -34,6 +34,7 @@ def get_current_state():
         "L": L,
         "cluster_nodes": cluster_nodes
     }
+
 # class ClusterNode:
 #
 #     def __init__(self, node_id, nickname):
