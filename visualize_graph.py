@@ -37,14 +37,21 @@ G = GraphVisualization()
 seen = set()
 nodes_list = []
 from sys import argv
-checked_node_id = argv[1] if len(argv) == 2 else 6000
-while checked_node_id not in seen:
-    resp = requests.get(f"http://0.0.0.0:{checked_node_id}").json()
-    nodes_list.append(resp["Node"])
-    seen.add(resp["Node"])
-    checked_node_id = resp["N"]
-nodes_list.append(checked_node_id)
+# if len(argv) != 3:
+#     print("Not enough arguments.")
+checked_node_id_ip = argv[1] 
+checked_node_id_port = argv[2] 
+print(checked_node_id_ip)
+print(checked_node_id_port)
+while tuple([checked_node_id_ip, checked_node_id_port]) not in seen:
+    resp = requests.get(f"http://{checked_node_id_ip}:{checked_node_id_port}").json()
+    print(resp)
+    nodes_list.append(tuple(resp["Node"]))
+    seen.add(tuple(resp["Node"]))
+    checked_node_id_ip, checked_node_id_port = resp["N"][0], resp["N"][1]
+nodes_list.append(tuple([checked_node_id_ip, checked_node_id_port]))
 
+print(nodes_list)
 for i in range(len(nodes_list)-1):
     G.addEdge(nodes_list[i], nodes_list[i+1])
 G.addEdge(nodes_list[i], nodes_list[i+1])

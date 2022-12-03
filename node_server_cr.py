@@ -319,6 +319,7 @@ def handle_election(params, from_):
 def handle_elected(params, from_):
     print("starting elected with ", params["L"])
     global L, voting
+    # Resetting to original state
     voting = False
     time.sleep(4)
     log_message(params['msg_to_retry'], params['sender'])
@@ -414,6 +415,8 @@ if __name__ == '__main__':
     parser.add_argument('--port', '-p', help="start node with port", type=int)
     parser.add_argument('--join', '-join', help="port of a node to join", type=int)
     parser.add_argument('--nick', '-nick', help="your nickname in the chat", type=str)
+
+
 
     # Parse arguments.
     cli_args = parser.parse_args()

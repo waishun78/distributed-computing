@@ -151,12 +151,10 @@ def initiate_election():
     state = "CANDIDATE"
     max_depth = 1
     print("Initiating election")
-
     while state == "CANDIDATE":
         no_responses = 0
         respOK = True
         print("Start sending wave...")
-        # Sending NEXT
         try:
             requests.post(f"http://0.0.0.0:{N}", json={
                         "msg_type": "candidature",
@@ -362,8 +360,7 @@ def handle_candidature(params, from_):
         depth = params["current_depth"] + 1
         if depth < params["max_depth"]:
             # Did not meet max depth
-            # Pass on message forward
-            # If can from previous node:
+            # Pass on message to the node in the original direction of message sent
             print("Havent meet depth")
             if from_ == P:
                 try:
@@ -458,15 +455,13 @@ def handle_candidature_response(params, from_):
         no_responses +=1
         print(f"Update no_responses to {no_responses}")
         respOK = respOK and params["is_leader"]
-        cond.release()
         print(f"Update respOK to {respOK}")
         print(f"Message causing me to update is from {from_}")
         if no_responses == 2:
             print("acquiring to notify")
-            cond.acquire()
             print("notifying all")
             cond.notify()
-            cond.release()
+        cond.release()
 
     else:
         if from_ == P:
