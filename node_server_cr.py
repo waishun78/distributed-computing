@@ -46,7 +46,6 @@ def get_current_state():
 
 def join_node(joined_node_id):
     global P
-    print(f"http://{joined_node_id[0]}:{joined_node_id[1]}")
     requests.post(f"http://{joined_node_id[0]}:{joined_node_id[1]}", json={
         "msg_type": "join",
         "from": node_id,
@@ -322,6 +321,7 @@ def handle_elected(params, from_):
     print("starting elected with ", params["L"])
     global L, voting
     # Resetting to original state
+    time.sleep(10)
     voting = False
     log_message(params['msg_to_retry'], params['sender'])
     if L != params["L"]:

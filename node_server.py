@@ -366,9 +366,8 @@ class NodeRequestHandler(BaseHTTPRequestHandler):
         msg_type_to_handler[msg_type](params, from_)
 
 
-def run(server_class=ThreadingHTTPServer, handler_class=NodeRequestHandler, port=6000, IP="0.0.0.0"):
-
-    server_address = (IP, port)
+def run(server_class=ThreadingHTTPServer, handler_class=NodeRequestHandler, port=6000, ip="0.0.0.0"):
+    server_address = (ip, port)
     httpd = server_class(server_address, handler_class)
     logging.info(f'[NODE STARTED] A node at {httpd.server_address[0]}:{httpd.server_address[1]}.')
     try:
@@ -387,9 +386,6 @@ if __name__ == '__main__':
     parser.add_argument('--joinport', '-jp', help="port of a node to join", type=int)
     parser.add_argument('--nick', '-nick', help="your nickname in the chat", type=str)
 
-    # IP of server
-    # IP = socket.gethostbyname(socket.gethostname())
-
     # Parse arguments.
     cli_args = parser.parse_args()
     node_id = (cli_args.ip, cli_args.port)
@@ -403,4 +399,4 @@ if __name__ == '__main__':
     if node_id and cli_args.joinip and cli_args.joinport:
         # Run a thread that joins a cluster after its own server is started.
         threading.Timer(3, join_node, args=[joined_node_id]).start()
-    run(port=node_id[1], IP = cli_args.ip)
+    run(port=node_id[1], ip = cli_args.ip)

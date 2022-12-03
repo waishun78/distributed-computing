@@ -15,8 +15,8 @@ import time
 
 logging.basicConfig(level=logging.INFO)
 
-node_id = ""
-N = NN = P = L = ""
+node_id = ("","")
+N = NN = P = L = ("","")
 cluster_nodes = []
 nick = ""
 
@@ -25,6 +25,16 @@ state = "NOT_INVOLVED"
 no_responses = 0
 respOK = True
 cond = threading.Condition()
+condRemoved = threading.Condition()
+removed = False
+
+# Make sure message of elected arrive on both sides
+elected_msg_count = 0
+condBothMsg = threading.Condition()
+
+last_repaired_node = ("","")
+condRepair = threading.Condition()
+
 
 
 def log_message(msg, sender, color=""):
@@ -39,9 +49,9 @@ def get_current_state():
         "P": P,
         "L": L,
         "cluster_nodes": cluster_nodes,
-        "state": state,
-        "no_responses": no_responses,
-        "respOK": respOK
+        # "state": state,
+        # "no_responses": no_responses,
+        # "respOK": respOK
     }
 # class ClusterNode:
 #
@@ -54,12 +64,11 @@ def get_current_state():
 
 def join_node(joined_node_id):
     global P
-    requests.post(f"http://0.0.0.0:{joined_node_id}", json={
+    requests.post(f"http://{joined_node_id[0]}:{joined_node_id[1]}", json={
         "msg_type": "join",
         "from": node_id,
     })
     P = joined_node_id
-
 
 def handle_join(params, from_):
     global N, NN, P
@@ -71,9 +80,9 @@ def handle_join(params, from_):
     prev_N = N
     prev_NN = NN
     NN = N
-    N = from_
+    N = (from_[0],from_[1])
     # Step 2 - Reply with N, NN, L pointers for newly joined node.
-    requests.post(f"http://0.0.0.0:{from_}", json={
+    requests.post(f"http://{from_[0]}:{from_[1]}", json={
         "msg_type": "join_reply",
         "from": node_id,
         "params": {
@@ -84,7 +93,7 @@ def handle_join(params, from_):
     })
     # Step 3 - Change NN of previous node to newly_joined.
     if not single_node_cluster:
-        requests.post(f"http://0.0.0.0:{P}", json={
+        requests.post(f"http://{P[0]}:{P[1]}", json={
             "msg_type": "change_nn",
             "from": node_id,
             "params": {
@@ -95,7 +104,7 @@ def handle_join(params, from_):
     if single_node_cluster:
         P = from_
     else:
-        requests.post(f"http://0.0.0.0:{prev_N}", json={
+        requests.post(f"http://{prev_N[0]}:{prev_N[1]}", json={
             "msg_type": "change_p",
             "from": node_id,
             "params": {
@@ -104,10 +113,10 @@ def handle_join(params, from_):
         })
     # Step 5 - The leader must know about all nodes in the cluster, so
     # every newly joined node has to register itself.
-    if node_id == L:
+    if (node_id[0],node_id[1]) == (L[0],L[1]):
         cluster_nodes.append(from_)
     else:
-        requests.post(f"http://0.0.0.0:{L}", json={
+        requests.post(f"http://{L[0]}:{L[1]}", json={
             "msg_type": "register_node",
             "from": node_id,
             "params": {
@@ -127,19 +136,19 @@ def handle_deregister_node(params, from_):
 
 def handle_change_p(params, from_):
     global P
-    P = params["P"]
+    P = (params["P"][0],params["P"][1])
 
 
 def handle_change_nn(params, from_):
     global NN
-    NN = params["NN"]
+    NN = (params["NN"][0],params["NN"][1])
 
 
 def handle_join_reply(params, from_):
     global N, NN, L
-    N = params["N"]
-    NN = params["NN"]
-    L = params["L"]
+    N = (params["N"][0],params["N"][1])
+    NN = (params["NN"][0],params["NN"][1])
+    L = (params["L"][0],params["L"][1])
 
 
 def handle_log_chat_msg(params, from_):
@@ -156,7 +165,7 @@ def initiate_election():
         respOK = True
         print("Start sending wave...")
         try:
-            requests.post(f"http://0.0.0.0:{N}", json={
+            requests.post(f"http://{N[0]}:{N[1]}", json={
                         "msg_type": "candidature",
                         "from": node_id,
                         "params": {
@@ -167,8 +176,8 @@ def initiate_election():
                     })
         except requests.ConnectionError:
             print("Start Repairing")
-            handle_dead_node_detected({"dead_node": N}, None)
-            requests.post(f"http://0.0.0.0:{N}", json={
+            handle_dead_node_detected({"dead_node": N, "node_who_found_dead": node_id}, None)
+            requests.post(f"http://{N[0]}:{N[1]}", json={
                         "msg_type": "candidature",
                         "from": node_id,
                         "params": {
@@ -179,7 +188,7 @@ def initiate_election():
                     })
         # Sending PREVIOUS
         try:
-            requests.post(f"http://0.0.0.0:{P}", json={
+            requests.post(f"http://{P[0]}:{P[1]}", json={
                         "msg_type": "candidature",
                         "from": node_id,
                         "params": {
@@ -189,8 +198,8 @@ def initiate_election():
                         }
                     })
         except requests.ConnectionError:
-            handle_dead_node_detected({"dead_node": P}, None)
-            requests.post(f"http://0.0.0.0:{P}", json={
+            handle_dead_node_detected({"dead_node": P,  "node_who_found_dead": node_id}, None)
+            requests.post(f"http://{P[0]}:{P[1]}", json={
                         "msg_type": "candidature",
                         "from": node_id,
                         "params": {
@@ -207,7 +216,6 @@ def initiate_election():
         while no_responses < 2:
             print("waiting for lock to be notified, blocking")
             val = cond.wait()
-            time.sleep(5)
             # Send itself to check again
             print(f"Waiting for responses, have:{no_responses}")
         # Receive both responses back, restart response count
@@ -223,14 +231,17 @@ def initiate_election():
         max_depth = max_depth*2
         
 def handle_send_chat_msg(params, from_):
+    global state, L, condRemoved, removed
+    if state == "RESETTING":
+        state = "NOT_INVOLVED"
     sender = params.get("sender", f"{node_id}, {nick}")
 
-    if node_id == L:
+    if (node_id[0],node_id[1]) == (L[0],L[1]):
         log_message(params['chat_msg'], sender)
         unreachable_node = None
         for node in cluster_nodes:
             try:
-                requests.post(f"http://0.0.0.0:{node}", json={
+                requests.post(f"http://{node[0]}:{node[1]}", json={
                     "msg_type": "log_chat_msg",
                     "from": node_id,
                     "params": {
@@ -243,19 +254,19 @@ def handle_send_chat_msg(params, from_):
 
         # If there are some nodes that are down, repair the topology
         if unreachable_node is not None:
-            if unreachable_node == N:
-                remove_n_and_repair_topology()
+            if (unreachable_node[0],unreachable_node[1]) == (N[0],N[1]):
+                remove_n_and_repair_topology(node_id)
             else:
-                requests.post(f"http://0.0.0.0:{N}", json={
+                requests.post(f"http://{N[0]}:{N[1]}", json={
                     "msg_type": "dead_node_detected",
                     "from": node_id,
                     "params": {
                         "dead_node": unreachable_node
                     }
                 })
-    elif node_id != L:
+    elif (node_id[0],node_id[1]) != (L[0],L[1]):
         try:
-            requests.post(f"http://0.0.0.0:{L}", json={
+            requests.post(f"http://{L[0]}:{L[1]}", json={
                 "msg_type": "send_chat_msg",
                 "from": node_id,
                 "params": {
@@ -264,32 +275,54 @@ def handle_send_chat_msg(params, from_):
                 }
             })
         except requests.ConnectionError:
-            print("Starting a new election")
             # Since the leader is the node that has failed
-            handle_dead_node_detected({"dead_node": L}, None)
+            # TODO: need to make sure topology is corrected before initiating election
+            handle_dead_node_detected({"dead_node": L, "node_who_found_dead": node_id}, None)
+            print("found dead, acquire lock to check if removed")
+            condRemoved.acquire()
+            if removed == False:
+                print("Waiting for removal to finish")
+                val = condRemoved.wait()
+            removed = False
+            print("Removal is done and election is started")
+            condRemoved.release()
             initiate_election()
+
+def handle_notify_removal(params, from_):
+    global removed
+    condRemoved.acquire()
+    removed = True
+    condRemoved.notify()
+    print("Notify Remove Lock")
+    condRemoved.release()
 
 
 def handle_dead_node_detected(params, from_):
+    global last_repaired_node, condRepair
+    condRepair.acquire()
     dead_node = params["dead_node"]
-    if N == dead_node:
-        # print(f"Repairing on {node_id}")
-        remove_n_and_repair_topology()
+    if (N[0],N[1]) == (dead_node[0], dead_node[1]):
+        print(f"Repairing on {node_id}")
+        last_repaired_node = (dead_node[0], dead_node[1])
+        remove_n_and_repair_topology(params["node_who_found_dead"])
     else:
-        requests.post(f"http://0.0.0.0:{N}", json={
-            "msg_type": "dead_node_detected",
-            "from": node_id,
-            "params": {
-                "dead_node": dead_node
-            }
-        })
+        # Check if it is already repaired, cause if it is already repaired, it might keep passing this message and cause a loop when it is alr fixed
+        if (dead_node[0], dead_node[1]) != (last_repaired_node[0],last_repaired_node[1]): 
+            requests.post(f"http://{N[0]}:{N[1]}", json={
+                "msg_type": "dead_node_detected",
+                "from": node_id,
+                "params": {
+                    "dead_node": dead_node,
+                    "node_who_found_dead": params["node_who_found_dead"]
+                }
+            })
+    condRepair.release()
 
-
-def remove_n_and_repair_topology():
-    global N, NN, P, L, cluster_nodes
+def remove_n_and_repair_topology(node_to_notify):
+    global N, NN, P, L, cluster_nodes, condRemoved, removed
     # Step 0 - Deregister N node from a leader.
     try:
-        requests.post(f"http://0.0.0.0:{L}", json={
+        requests.post(f"http://{L[0]}:{L[1]}", json={
             "msg_type": "deregister_node",
             "from": node_id,
             "params": {
@@ -305,14 +338,14 @@ def remove_n_and_repair_topology():
     N = NN
 
     # If we are the only node in the topology, set all pointers to yourself.
-    if NN == node_id:
+    if (NN[0],NN[1]) == (node_id[0],node_id[1]):
         N = NN = P = L = node_id
         cluster_nodes = []
         return
     # Step 2 - Get new NN pointer.
-    NN = int(requests.get(f"http://0.0.0.0:{NN}/n").text)
+    NN = (requests.get(f"http://{NN[0]}:{NN[1]}/n").text).split(",")
     # Step 3 - Tell your N to change its P to yourself.
-    requests.post(f"http://0.0.0.0:{N}", json={
+    requests.post(f"http://{N[0]}:{N[1]}", json={
         "msg_type": "change_p",
         "from": node_id,
         "params": {
@@ -320,21 +353,33 @@ def remove_n_and_repair_topology():
         }
     })
     # Step 4 - Change NN of your P.
-    requests.post(f"http://0.0.0.0:{P}", json={
+    requests.post(f"http://{P[0]}:{P[1]}", json={
         "msg_type": "change_nn",
         "from": node_id,
         "params": {
             "NN": N
         }
     })
+    print(f"Fixed N:{N} NN:{NN} L:{L} P:{P}")
+    requests.post(f"http://{node_to_notify[0]}:{node_to_notify[1]}", json={
+        "msg_type": "notify_removal",
+        "from": node_id,
+        "params": {
+            "removal": "True"
+        }
+    })
+
 
 def handle_candidature(params, from_):
-    global N, P, state
-    print(f"Handling candidacy from {params['current_node']}")
-    if params["current_node"] < node_id:
+    global N, P, state, condBothMsg, elected_msg_count
+    # print(f"Handling candidature from {params['current_node']}")
+    # print(node_id)
+    # print(params["current_node"][0],params["current_node"][1])
+    # print((params["current_node"][0],params["current_node"][1]) < node_id)
+    if (params["current_node"][0],params["current_node"][1]) < (node_id[0],node_id[1]):
         print(f"I am a better candidate, my state is {state}")
-        if from_ == P:
-            requests.post(f"http://0.0.0.0:{P}", json={
+        if (from_[0],from_[1]) == (P[0],P[1]):
+            requests.post(f"http://{P[0]}:{P[1]}", json={
                     "msg_type": "candidature_response",
                     "from": node_id,
                     "params": {
@@ -343,7 +388,7 @@ def handle_candidature(params, from_):
                     }
                 })
         else:
-            requests.post(f"http://0.0.0.0:{N}", json={
+            requests.post(f"http://{N[0]}:{N[1]}", json={
                     "msg_type": "candidature_response",
                     "from": node_id,
                     "params": {
@@ -353,7 +398,7 @@ def handle_candidature(params, from_):
                 })
         if state == "NOT_INVOLVED":
             initiate_election()
-    elif params["current_node"] > node_id:
+    elif (params["current_node"][0],params["current_node"][1]) > (node_id[0],node_id[1]):
         if state != "NOT_INVOLVED":
             state = "LOST"
             print("Lost")
@@ -362,10 +407,10 @@ def handle_candidature(params, from_):
             # Did not meet max depth
             # Pass on message to the node in the original direction of message sent
             print("Havent meet depth")
-            if from_ == P:
+            if (from_[0],from_[1]) == (P[0],P[1]):
                 try:
-                    print(f"I am node {node_id} passing on the message to {N}")
-                    requests.post(f"http://0.0.0.0:{N}", json={
+                    print(f"I am node {node_id} passing on the candidature to {N} for {params['current_node']}")
+                    requests.post(f"http://{N[0]}:{N[1]}", json={
                         "msg_type": "candidature",
                         "from": node_id,
                         "params": {
@@ -376,9 +421,9 @@ def handle_candidature(params, from_):
                     })
                 except requests.ConnectionError:
                     print("Start Repairing")
-                    handle_dead_node_detected({"dead_node": N}, None)
-                    remove_n_and_repair_topology()
-                    requests.post(f"http://0.0.0.0:{N}", json={
+                    handle_dead_node_detected({"dead_node": N, "node_who_found_dead": node_id}, None)
+                    remove_n_and_repair_topology(node_id)
+                    requests.post(f"http://{N[0]}:{N[1]}", json={
                         "msg_type": "candidature",
                         "from": node_id,
                         "params": {
@@ -389,8 +434,8 @@ def handle_candidature(params, from_):
                     })
             else:
                 try:
-                    print(f"I am node {node_id} passing on the message to {P}")
-                    requests.post(f"http://0.0.0.0:{P}", json={
+                    print(f"I am node {node_id} passing on the candidature to {P} for {params['current_node']}")
+                    requests.post(f"http://{P[0]}:{P[1]}", json={
                         "msg_type": "candidature",
                         "from": node_id,
                         "params": {
@@ -401,9 +446,9 @@ def handle_candidature(params, from_):
                     })
                 except requests.ConnectionError:
                     print("Start Repairing")
-                    handle_dead_node_detected({"dead_node": P}, None)
-                    remove_n_and_repair_topology()
-                    requests.post(f"http://0.0.0.0:{P}", json={
+                    handle_dead_node_detected({"dead_node": P, "node_who_found_dead": node_id}, None)
+                    remove_n_and_repair_topology(node_id)
+                    requests.post(f"http://{P[0]}:{P[1]}", json={
                         "msg_type": "candidature",
                         "from": node_id,
                         "params": {
@@ -417,9 +462,9 @@ def handle_candidature(params, from_):
             # Meet max depth
             # Reply candidate
             
-            if from_ == P:
-                print(f"I am node {node_id} passing on the message to {P} for {params['current_node']}")
-                requests.post(f"http://0.0.0.0:{P}", json={
+            if (from_[0],from_[1]) == (P[0],P[1]):
+                print(f"I am node {node_id} passing on the candidature to {P} for {params['current_node']}")
+                requests.post(f"http://{P[0]}:{P[1]}", json={
                         "msg_type": "candidature_response",
                         "from": node_id,
                         "params": {
@@ -428,8 +473,8 @@ def handle_candidature(params, from_):
                         }
                     })
             else:
-                print(f"I am node {node_id} passing on the message to {N} for {params['current_node']}")
-                requests.post(f"http://0.0.0.0:{N}", json={
+                print(f"I am node {node_id} passing on the candidature to {N} for {params['current_node']}")
+                requests.post(f"http://{N[0]}:{N[1]}", json={
                         "msg_type": "candidature_response",
                         "from": node_id,
                         "params": {
@@ -439,16 +484,25 @@ def handle_candidature(params, from_):
                     })
     else:
         # Receive returning message
-        print("Elected")
-        if state != "ELECTED":
-            state = "ELECTED"
-            winner = node_id
-            handle_elected({"L": node_id}, None)
+        print("Treying to acquire condBothMsg lock")
+        condBothMsg.acquire()
+        if elected_msg_count == 0:
+            print("receive one candidature that went one round, waiting for the other one")
+            elected_msg_count += 1
+        else:
+            print("Elected")
+            if state != "ELECTED":
+                state = "ELECTED"
+                winner = node_id
+                handle_elected({"L": node_id}, None)
+            elected_msg_count = 0
+        condBothMsg.release()
+        print("release condBothMsg lock")
 
 def handle_candidature_response(params, from_):
     global no_responses, respOK, cond
     print(f"Handling candidature response by candidate {params['node_q']}")
-    if params["node_q"] == node_id:
+    if (params["node_q"][0],params["node_q"][1])== (node_id[0],node_id[1]):
         # Reply belongs to current node
         print("Trying to acquire lock")
         cond.acquire()
@@ -464,9 +518,9 @@ def handle_candidature_response(params, from_):
         cond.release()
 
     else:
-        if from_ == P:
+        if (from_[0],from_[1]) == (P[0],P[1]):
             print(f"I am node{node_id} and I am passing candidature response for {params['node_q']} to {N}")
-            requests.post(f"http://0.0.0.0:{N}", json={
+            requests.post(f"http://{N[0]}:{N[1]}", json={
                     "msg_type": "candidature_response",
                     "from": node_id,
                     "params": {
@@ -476,7 +530,7 @@ def handle_candidature_response(params, from_):
                 })
         else:
             print(f"I am node{node_id} and I am passing candidature response for {params['node_q']} to {P}")
-            requests.post(f"http://0.0.0.0:{P}", json={
+            requests.post(f"http://{P[0]}:{P[1]}", json={
                     "msg_type": "candidature_response",
                     "from": node_id,
                     "params": {
@@ -489,25 +543,26 @@ def handle_candidature_response(params, from_):
 def handle_elected(params, from_):
     # print("starting elected with ", params["L"])
     global L, state, respOK
-    if L != params["L"]:
+    if (L[0],L[1]) != (params["L"][0],params["L"][1]):
         # If L hasn't already been updated – update it.
-        L = params["L"]
+        L = (params["L"][0],params["L"][1])
         print(f"Updating elected to {L}")
-        # Resetting states
-        state = "NOT_INVOLVED"
+        # Resetting states, sleep to ensure all messages come in time
+        time.sleep(1)
+        state = "RESETTING"
         no_responses = 0
         respOK = True
-        if node_id != L:
+        if (node_id[0],node_id[1]) != (L[0],L[1]):
             # print(f"{node_id} sent register to {L}")
             # If this node is not a leader, register yourself to a new leader.
-            requests.post(f"http://0.0.0.0:{L}", json={
+            requests.post(f"http://{L[0]}:{L[1]}", json={
                 "msg_type": "register_node",
                 "from": node_id,
                 "params": {
                     "new_node": node_id
                 }
             })
-        requests.post(f"http://0.0.0.0:{N}", json={
+        requests.post(f"http://{N[0]}:{N[1]}", json={
             "msg_type": "elected",
             "from": node_id,
             "params": {
@@ -528,7 +583,7 @@ class NodeRequestHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-type', 'text/html')
             self.end_headers()
-            self.wfile.write(f"{N}".encode('utf-8'))
+            self.wfile.write(f"{N[0]},{N[1]}".encode('utf-8'))
             return
 
         self.send_response(200)
@@ -539,11 +594,14 @@ class NodeRequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         # Read POST body.
+        time.sleep(2)
+        print(get_current_state())
         content_length = int(self.headers['Content-Length'])
         post_data = self.rfile.read(content_length)
         self._set_response_headers()
         # Unmarshal to dict.
         post_data = json.loads(post_data)
+        print(post_data)
         msg_type = post_data["msg_type"]
         # If value does not exist then use ""
         from_ = post_data.get("from", "")
@@ -563,13 +621,14 @@ class NodeRequestHandler(BaseHTTPRequestHandler):
             # "election": handle_election,
             "elected": handle_elected,
             "candidature": handle_candidature,
-            "candidature_response": handle_candidature_response
+            "candidature_response": handle_candidature_response,
+            "notify_removal": handle_notify_removal
         }
         msg_type_to_handler[msg_type](params, from_)
 
 
-def run(server_class=ThreadingHTTPServer, handler_class=NodeRequestHandler, port=6000):
-    server_address = ('0.0.0.0', port)
+def run(server_class=ThreadingHTTPServer, handler_class=NodeRequestHandler, port=6000, ip="0.0.0.0"):
+    server_address = (ip, port)
     httpd = server_class(server_address, handler_class)
     logging.info(f'[NODE STARTED] A node at {httpd.server_address[0]}:{httpd.server_address[1]}.')
     try:
@@ -582,21 +641,23 @@ def run(server_class=ThreadingHTTPServer, handler_class=NodeRequestHandler, port
 # Only runs when main function run, not when executed
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    parser.add_argument('--ip', '-ip', help="start node with ip", type=str)
     parser.add_argument('--port', '-p', help="start node with port", type=int)
-    parser.add_argument('--join', '-join', help="port of a node to join", type=int)
+    parser.add_argument('--joinip', '-ji', help="ip of a node to join", type=str)
+    parser.add_argument('--joinport', '-jp', help="port of a node to join", type=int)
     parser.add_argument('--nick', '-nick', help="your nickname in the chat", type=str)
 
     # Parse arguments.
     cli_args = parser.parse_args()
-    node_id = cli_args.port
-    joined_node_id = cli_args.join
+    node_id = (cli_args.ip, cli_args.port)
+    joined_node_id = (cli_args.joinip, cli_args.joinport)
     nick = cli_args.nick or "unknown"
     N = NN = P = L = node_id
 
     if node_id is None and joined_node_id is None:
         parser.error("Not enough arguments.")
 
-    if node_id and joined_node_id:
+    if node_id and cli_args.joinip and cli_args.joinport:
         # Run a thread that joins a cluster after its own server is started.
         threading.Timer(3, join_node, args=[joined_node_id]).start()
-    run(port=node_id)
+    run(port=node_id[1], ip = cli_args.ip)
