@@ -14,8 +14,8 @@ import time
 
 logging.basicConfig(level=logging.INFO)
 
-node_id = ""
-N = NN = P = L = ""
+node_id = ("","")
+N = NN = P = L = ("","")
 cluster_nodes = []
 nick = ""
 voting = False
@@ -46,7 +46,8 @@ def get_current_state():
 
 def join_node(joined_node_id):
     global P
-    requests.post(f"http://0.0.0.0:{joined_node_id}", json={
+    print(f"http://{joined_node_id[0]}:{joined_node_id[1]}")
+    requests.post(f"http://{joined_node_id[0]}:{joined_node_id[1]}", json={
         "msg_type": "join",
         "from": node_id,
     })
@@ -65,7 +66,7 @@ def handle_join(params, from_):
     NN = N
     N = from_
     # Step 2 - Reply with N, NN, L pointers for newly joined node.
-    requests.post(f"http://0.0.0.0:{from_}", json={
+    requests.post(f"http://{from_[0]}:{from_[1]}", json={
         "msg_type": "join_reply",
         "from": node_id,
         "params": {
@@ -76,7 +77,7 @@ def handle_join(params, from_):
     })
     # Step 3 - Change NN of previous node to newly_joined.
     if not single_node_cluster:
-        requests.post(f"http://0.0.0.0:{P}", json={
+        requests.post(f"http://{P[0]}:{P[1]}", json={
             "msg_type": "change_nn",
             "from": node_id,
             "params": {
@@ -87,7 +88,7 @@ def handle_join(params, from_):
     if single_node_cluster:
         P = from_
     else:
-        requests.post(f"http://0.0.0.0:{prev_N}", json={
+        requests.post(f"http://{prev_N[0]}:{prev_N[1]}", json={
             "msg_type": "change_p",
             "from": node_id,
             "params": {
@@ -99,7 +100,7 @@ def handle_join(params, from_):
     if node_id == L:
         cluster_nodes.append(from_)
     else:
-        requests.post(f"http://0.0.0.0:{L}", json={
+        requests.post(f"http://{L[0]}:{L[1]}", json={
             "msg_type": "register_node",
             "from": node_id,
             "params": {
@@ -148,7 +149,7 @@ def handle_send_chat_msg(params, from_):
         unreachable_node = None
         for node in cluster_nodes:
             try:
-                requests.post(f"http://0.0.0.0:{node}", json={
+                requests.post(f"http://{node[0]}:{node[1]}", json={
                     "msg_type": "log_chat_msg",
                     "from": node_id,
                     "params": {
@@ -164,16 +165,16 @@ def handle_send_chat_msg(params, from_):
             if unreachable_node == N:
                 remove_n_and_repair_topology(params, from_)
             else:
-                requests.post(f"http://0.0.0.0:{N}", json={
+                requests.post(f"http://{N[0]}:{N[1]}", json={
                     "msg_type": "dead_node_detected",
                     "from": node_id,
                     "params": {
                         "dead_node": unreachable_node
                     }
                 })
-    elif node_id != L:
+    elif node_id != (L[0],L[1]):
         try:
-            requests.post(f"http://0.0.0.0:{L}", json={
+            requests.post(f"http://{L[0]}:{L[1]}", json={
                 "msg_type": "send_chat_msg",
                 "from": node_id,
                 "params": {
@@ -183,10 +184,10 @@ def handle_send_chat_msg(params, from_):
             })
         except requests.ConnectionError:
             # If cannot connect to the leader than start leader election
-            print("Starting a new election")
+            print("Starting a new election with {node_id}")
             voting = True
             try:
-                requests.post(f"http://0.0.0.0:{N}", json={
+                requests.post(f"http://{N[0]}:{N[1]}", json={
                     "msg_type": "election",
                     "from": node_id,
                     "params": {
@@ -198,7 +199,7 @@ def handle_send_chat_msg(params, from_):
             except requests.ConnectionError:
                 print("Start Repairing")
                 remove_n_and_repair_topology(params, from_)
-                requests.post(f"http://0.0.0.0:{N}", json={
+                requests.post(f"http://{N[0]}:{N[1]}", json={
                     "msg_type": "election",
                     "from": node_id,
                     "params": {
@@ -218,7 +219,7 @@ def handle_dead_node_detected(params, from_):
         # print(f"Repairing on {node_id}")
         remove_n_and_repair_topology(params, from_)
     else:
-        requests.post(f"http://0.0.0.0:{N}", json={
+        requests.post(f"http://{N[0]}:{N[1]}", json={
             "msg_type": "dead_node_detected",
             "from": node_id,
             "params": {
@@ -231,7 +232,7 @@ def remove_n_and_repair_topology(params, from_):
     global N, NN, P, L, cluster_nodes
     # Step 0 - Deregister N node from a leader.
     try:
-        requests.post(f"http://0.0.0.0:{L}", json={
+        requests.post(f"http://{L[0]}:{L[1]}", json={
             "msg_type": "deregister_node",
             "from": node_id,
             "params": {
@@ -252,9 +253,9 @@ def remove_n_and_repair_topology(params, from_):
         cluster_nodes = []
         return
     # Step 2 - Get new NN pointer.
-    NN = int(requests.get(f"http://0.0.0.0:{NN}/n").text)
+    NN = (requests.get(f"http://{NN[0]}:{NN[1]}/n").text).split(",")
     # Step 3 - Tell your N to change its P to yourself.
-    requests.post(f"http://0.0.0.0:{N}", json={
+    requests.post(f"http://{N[0]}:{N[1]}", json={
         "msg_type": "change_p",
         "from": node_id,
         "params": {
@@ -262,7 +263,7 @@ def remove_n_and_repair_topology(params, from_):
         }
     })
     # Step 4 - Change NN of your P.
-    requests.post(f"http://0.0.0.0:{P}", json={
+    requests.post(f"http://{P[0]}:{P[1]}", json={
         "msg_type": "change_nn",
         "from": node_id,
         "params": {
@@ -277,7 +278,7 @@ def handle_election(params, from_):
 
     def send_handle_elected(node_):
         try:
-            requests.post(f"http://0.0.0.0:{N}", json={
+            requests.post(f"http://{N[0]}:{N[1]}", json={
                 "msg_type": "election",
                 "from": node_id,
                 "params": {
@@ -289,7 +290,7 @@ def handle_election(params, from_):
         except requests.ConnectionError:
             print("Start Repairing")
             remove_n_and_repair_topology(params, from_)
-            requests.post(f"http://0.0.0.0:{N}", json={
+            requests.post(f"http://{N[0]}:{N[1]}", json={
                 "msg_type": "election",
                 "from": node_id,
                 "params": {
@@ -299,11 +300,12 @@ def handle_election(params, from_):
                 }
             })
 
-    if node_id > params["max_id"] and voting != True:
+    print(node_id, params["max_id"])
+    if node_id > (params["max_id"][0],params["max_id"][1]) and voting != True:
         # This happens when the max_id is smaller than node_id, update new leader with this larger node_id
         print("I am larger")
         send_handle_elected(node_id)
-    elif node_id < params["max_id"]:
+    elif node_id < (params["max_id"][0],params["max_id"][1]):
         # If node_id of current node is smaller than the max_id in message
         print("I am smaller")
         send_handle_elected(params["max_id"])
@@ -321,7 +323,6 @@ def handle_elected(params, from_):
     global L, voting
     # Resetting to original state
     voting = False
-    time.sleep(4)
     log_message(params['msg_to_retry'], params['sender'])
     if L != params["L"]:
         # If L hasn't already been updated – update it.
@@ -329,7 +330,7 @@ def handle_elected(params, from_):
         if node_id != L:
             print(f"{node_id} sent register to {L}")
             # If this node is not a leader, register yourself to a new leader.
-            requests.post(f"http://0.0.0.0:{L}", json={
+            requests.post(f"http://{L[0]}:{L[1]}", json={
                 "msg_type": "register_node",
                 "from": node_id,
                 "params": {
@@ -337,7 +338,7 @@ def handle_elected(params, from_):
                 }
             })
         print(f"{node_id} sending elected message to {N}")
-        requests.post(f"http://0.0.0.0:{N}", json={
+        requests.post(f"http://{N[0]}:{N[1]}", json={
             "msg_type": "elected",
             "from": node_id,
             "params": {
@@ -360,7 +361,7 @@ class NodeRequestHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-type', 'text/html')
             self.end_headers()
-            self.wfile.write(f"{N}".encode('utf-8'))
+            self.wfile.write(f"{N[0]},{N[1]}".encode('utf-8'))
             return
 
         self.send_response(200)
@@ -398,8 +399,8 @@ class NodeRequestHandler(BaseHTTPRequestHandler):
         msg_type_to_handler[msg_type](params, from_)
 
 
-def run(server_class=ThreadingHTTPServer, handler_class=NodeRequestHandler, port=6000):
-    server_address = ('0.0.0.0', port)
+def run(server_class=ThreadingHTTPServer, handler_class=NodeRequestHandler, port=6000, ip="0.0.0.0"):
+    server_address = (ip, port)
     httpd = server_class(server_address, handler_class)
     logging.info(f'[NODE STARTED] A node at {httpd.server_address[0]}:{httpd.server_address[1]}.')
     try:
@@ -412,23 +413,23 @@ def run(server_class=ThreadingHTTPServer, handler_class=NodeRequestHandler, port
 # Only runs when main function run, not when executed
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    parser.add_argument('--ip', '-ip', help="start node with ip", type=str)
     parser.add_argument('--port', '-p', help="start node with port", type=int)
-    parser.add_argument('--join', '-join', help="port of a node to join", type=int)
+    parser.add_argument('--joinip', '-ji', help="ip of a node to join", type=str)
+    parser.add_argument('--joinport', '-jp', help="port of a node to join", type=int)
     parser.add_argument('--nick', '-nick', help="your nickname in the chat", type=str)
-
-
 
     # Parse arguments.
     cli_args = parser.parse_args()
-    node_id = cli_args.port
-    joined_node_id = cli_args.join
+    node_id = (cli_args.ip, cli_args.port)
+    joined_node_id = (cli_args.joinip, cli_args.joinport)
     nick = cli_args.nick or "unknown"
     N = NN = P = L = node_id
 
     if node_id is None and joined_node_id is None:
         parser.error("Not enough arguments.")
 
-    if node_id and joined_node_id:
+    if node_id and cli_args.joinip and cli_args.joinport:
         # Run a thread that joins a cluster after its own server is started.
         threading.Timer(3, join_node, args=[joined_node_id]).start()
-    run(port=node_id)
+    run(port=node_id[1], ip = cli_args.ip)
