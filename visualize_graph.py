@@ -44,6 +44,7 @@ checked_node_id_port = argv[2]
 print(checked_node_id_ip)
 print(checked_node_id_port)
 while tuple([checked_node_id_ip, checked_node_id_port]) not in seen:
+    print('dsfsd')
     resp = requests.get(f"http://{checked_node_id_ip}:{checked_node_id_port}").json()
     print(resp)
     nodes_list.append(tuple(resp["Node"]))

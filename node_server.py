@@ -182,7 +182,7 @@ def handle_send_chat_msg(params, from_):
                 }
             })
         except requests.ConnectionError:
-            print("Starting a new election")
+            remove_n_and_repair_topology(params, from_)
             handle_election({"node_ids": [],
                              "msg_to_retry": params["chat_msg"],
                              "sender": sender}, None)

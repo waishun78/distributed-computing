@@ -315,7 +315,7 @@ def handle_dead_node_detected(params, from_):
                     "dead_node": dead_node,
                     "node_who_found_dead": params["node_who_found_dead"]
                 }
-            })
+            })  
     condRepair.release()
 
 def remove_n_and_repair_topology(node_to_notify):
